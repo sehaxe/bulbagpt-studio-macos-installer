@@ -1,0 +1,13 @@
+#!/bin/bash
+
+# Путь установки
+TARGET_APP="/Applications/BulbaGPT"
+
+# Даем права всем пользователям (777 грубо, но надежно для локального ПК) 
+# или меняем владельца на того, кто сейчас залогинен
+CURRENT_USER=$(scutil <<< "show State:/Users/ConsoleUser" | awk '/Name :/ { print $3 }')
+
+chown -R $CURRENT_USER:staff "$TARGET_APP"
+chmod -R 755 "$TARGET_APP"
+
+exit 0
