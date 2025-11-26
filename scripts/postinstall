@@ -1,24 +1,30 @@
 #!/bin/bash
 
 # --- НАСТРОЙКИ ---
+# Если скрипт лежит в папке с проектом, используем текущую директорию как источник
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
 APP_DIR="/Applications/BulbaGPT"
 MINIFORGE_DIR="$APP_DIR/miniforge3"
 CONDA_ENV_NAME="bulbagpt_env"
 PYTHON_VERSION="3.11"
 LOG_FILE="$APP_DIR/install_log.txt"
 
-# Создаем папку (если нет)
+# Создаем папку приложения
 mkdir -p "$APP_DIR"
 
-# Включаем запись лога (stdout и stderr)
-exec > "$LOG_FILE" 2>&1
+# Копируем файлы проекта в APP_DIR, если скрипт запущен не оттуда
+if [ "$SCRIPT_DIR" != "$APP_DIR" ]; then
+    echo "📂 Копирование файлов проекта в $APP_DIR..."
+    cp -R "$SCRIPT_DIR/"* "$APP_DIR/" 2>/dev/null || true
+fi
+
+# Включаем запись лога
+exec > >(tee "$LOG_FILE") 2>&1
 
 echo "--- НАЧАЛО УСТАНОВКИ: $(date) ---"
-echo "Версия установщика: 1.0"
+echo "Версия установщика: 1.1 (с поддержкой Rust)"
 
-# Определяем пользователя
 CURRENT_USER=$(scutil <<< "show State:/Users/ConsoleUser" | awk '/Name :/ { print $3 }')
-echo "Пользователь системы: $CURRENT_USER"
 
 # 1. Установка Miniforge
 if [ ! -d "$MINIFORGE_DIR" ]; then
@@ -31,7 +37,6 @@ if [ ! -d "$MINIFORGE_DIR" ]; then
     fi
     
     curl -L -o /tmp/miniforge.sh "$URL"
-    
     echo "📦 Распаковка Miniforge..."
     bash /tmp/miniforge.sh -b -u -p "$MINIFORGE_DIR"
     rm /tmp/miniforge.sh
@@ -39,7 +44,7 @@ else
     echo "✅ Miniforge уже существует."
 fi
 
-# 2. Создание окружения
+# 2. Настройка Conda
 echo "🔨 Настройка Conda окружения..."
 source "$MINIFORGE_DIR/bin/activate"
 
@@ -50,26 +55,71 @@ else
     echo "   Окружение уже есть."
 fi
 
-# 3. Установка библиотек
+# Активируем окружение
+conda activate "$CONDA_ENV_NAME"
+
+# 3. Проверка и установка Rust (КРИТИЧНОЕ ИСПРАВЛЕНИЕ)
+echo "🦀 Проверка Rust Toolchain..."
+
+# Пробуем подтянуть переменные окружения Rust, если они есть
+if [ -f "$HOME/.cargo/env" ]; then
+    source "$HOME/.cargo/env"
+fi
+
+if ! command -v cargo &> /dev/null; then
+    echo "⚠️ Rust не найден. Устанавливаем Rustup..."
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+    source "$HOME/.cargo/env"
+else
+    echo "✅ Rust уже установлен: $(cargo --version)"
+fi
+
+# 4. Установка библиотек Python
 REQ_FILE="$APP_DIR/requirements.txt"
 if [ -f "$REQ_FILE" ]; then
     echo "📦 Установка библиотек (pip install)..."
-    "$MINIFORGE_DIR/envs/$CONDA_ENV_NAME/bin/pip" install -r "$REQ_FILE"
+    pip install -r "$REQ_FILE"
+    # Принудительно ставим maturin, если его нет в requirements
+    pip install maturin
 else
-    echo "⚠️ requirements.txt не найден в $APP_DIR"
+    echo "⚠️ requirements.txt не найден!"
 fi
 
-# 4. Исправление прав
+# 5. Компиляция Rust-ядра (ГЛАВНОЕ ИСПРАВЛЕНИЕ)
+RUST_SRC_DIR="$APP_DIR/bulba_rust"
+
+if [ -d "$RUST_SRC_DIR" ]; then
+    echo "⚙️ Компиляция ядра Bulba Rust (может занять время)..."
+    cd "$RUST_SRC_DIR"
+    
+    # Очистка старых билдов для надежности
+    rm -rf target 2>/dev/null
+    
+    # Компиляция и установка в текущее Python окружение
+    maturin develop --release
+    
+    if [ $? -eq 0 ]; then
+        echo "✅ ЯДРО RUST УСПЕШНО СКОМПИЛИРОВАНО!"
+    else
+        echo "❌ ОШИБКА КОМПИЛЯЦИИ RUST! Проверьте лог."
+        exit 1
+    fi
+    cd "$APP_DIR"
+else
+    echo "❌ Ошибка: Папка bulba_rust не найдена в $APP_DIR"
+    echo "   Убедитесь, что папка 'bulba_rust' находится рядом с этим скриптом."
+    exit 1
+fi
+
+# 6. Исправление прав
 echo "👤 Исправление прав доступа..."
 if [ -n "$CURRENT_USER" ] && [ "$CURRENT_USER" != "loginwindow" ]; then
     chown -R "$CURRENT_USER:staff" "$APP_DIR"
 fi
 
-# Делаем файлы исполняемыми
 chmod -R 755 "$APP_DIR"
-
-# Делаем лог читаемым для всех (иначе его сможет открыть только root)
 chmod 666 "$LOG_FILE"
 
-echo "✅ УСТАНОВКА ЗАВЕРШЕНА!"
+echo "🎉 УСТАНОВКА ПОЛНОСТЬЮ ЗАВЕРШЕНА!"
+echo "➡️  Для запуска: cd $APP_DIR && $MINIFORGE_DIR/envs/$CONDA_ENV_NAME/bin/python main.py"
 exit 0
