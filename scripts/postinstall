@@ -1,18 +1,21 @@
 #!/bin/bash
 
-# Путь установки
-TARGET_APP="/Applications/BulbaGPT"
+# Путь к установленной программе
+TARGET_DIR="/Applications/BulbaGPT"
 
-# Определяем реального пользователя (не root)
+# 1. Находим папку приложения внутри (на всякий случай даем права и на .app)
+APP_BUNDLE="$TARGET_DIR/BulbaGPT Studio.app"
+
+# 2. Определяем реального пользователя (кто залогинен)
 CURRENT_USER=$(scutil <<< "show State:/Users/ConsoleUser" | awk '/Name :/ { print $3 }')
 
-# Если пользователь найден и это не экран входа
+# 3. Меняем владельца папки на текущего пользователя (чтобы Python мог писать файлы)
 if [ -n "$CURRENT_USER" ] && [ "$CURRENT_USER" != "loginwindow" ]; then
-    # Отдаем папку пользователю
-    chown -R "$CURRENT_USER:staff" "$TARGET_APP"
+    chown -R "$CURRENT_USER:staff" "$TARGET_DIR"
 fi
 
-# Даем права на запись (755)
-chmod -R 755 "$TARGET_APP"
+# 4. САМОЕ ВАЖНОЕ: Делаем всё внутри папки исполняемым/доступным
+# 755 = rwxr-xr-x (Владелец может всё, остальные читать и запускать)
+chmod -R 755 "$TARGET_DIR"
 
 exit 0
