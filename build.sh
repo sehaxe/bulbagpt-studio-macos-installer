@@ -1,34 +1,57 @@
-# ---------------------------------------------------------
-# 4. Компиляция C-лаунчера (Вместо AppleScript)
-# ---------------------------------------------------------
-echo "🔨 Компиляция Native C Launcher..."
+#!/bin/bash
+set -e # Останавливать скрипт при ошибке
 
-# Путь, куда положим бинарник. 
-# ВАЖНО: Бинарники лежат в Contents/MacOS, а не в корне .app
-APP_EXECUTABLE_DIR="$ROOT_DIR$INSTALL_LOCATION/BulbaGPT Studio.app/Contents/MacOS"
+# --- НАСТРОЙКИ ---
+APP_NAME="BulbaGPT"
+INSTALL_LOCATION="/Applications/$APP_NAME"
+BUILD_DIR="build_temp"
+ROOT_DIR="$BUILD_DIR/root"
+MAIN_REPO_URL="https://github.com/sehaxe/bulbagpt-studio.git"
+IDENTIFIER="com.sehaxe.bulbagpt"
+VERSION="1.0"
+
+# Путь к самому приложению внутри папки сборки
+APP_BUNDLE="$ROOT_DIR$INSTALL_LOCATION/BulbaGPT Studio.app"
+
+echo "🚀 Начинаем сборку $APP_NAME..."
+
+# 1. Очистка
+echo "🧹 Очистка..."
+rm -rf "$BUILD_DIR"
+rm -f "${APP_NAME}_Installer.pkg"
+rm -f component.pkg
+rm -f distribution.xml
+
+# 2. Подготовка структуры
+mkdir -p "$ROOT_DIR/Applications"
+
+# 3. Клонирование репозитория
+echo "📥 Клонирование репозитория..."
+git clone "$MAIN_REPO_URL" "$ROOT_DIR$INSTALL_LOCATION"
+# Удаляем мусор git
+rm -rf "$ROOT_DIR$INSTALL_LOCATION/.git"
+rm -rf "$ROOT_DIR$INSTALL_LOCATION/.github"
+rm -rf "$ROOT_DIR$INSTALL_LOCATION/.gitignore"
+
+# 4. Компиляция C-лаунчера
+echo "🔨 Компиляция Native C Launcher..."
+APP_EXECUTABLE_DIR="$APP_BUNDLE/Contents/MacOS"
 mkdir -p "$APP_EXECUTABLE_DIR"
 
 if [ -f "resources/launcher.c" ]; then
-    # Компилируем C-код в исполняемый файл с именем "applet" (или любым другим)
-    # -o указывает выходной файл
+    # Компилируем C в бинарник
     clang -o "$APP_EXECUTABLE_DIR/BulbaGPT Studio" resources/launcher.c
-    
-    # Делаем его исполняемым
+    # Делаем исполняемым
     chmod +x "$APP_EXECUTABLE_DIR/BulbaGPT Studio"
 else
-    echo "❌ Ошибка: resources/launcher.c не найден!"
+    echo "❌ Ошибка: Файл resources/launcher.c не найден!"
     exit 1
 fi
 
-# ---------------------------------------------------------
-# 4.1 Создание Info.plist (ОБЯЗАТЕЛЬНО для C-лаунчера)
-# ---------------------------------------------------------
-# AppleScript создавал его сам, а теперь мы должны создать его вручную.
-# Без этого файла macOS не поймет, что это приложение.
+# 5. Создание Info.plist (Паспорт приложения)
 echo "📝 Создание Info.plist..."
-PLIST_PATH="$ROOT_DIR$INSTALL_LOCATION/BulbaGPT Studio.app/Contents/Info.plist"
-
-cat > "$PLIST_PATH" <<EOF
+mkdir -p "$APP_BUNDLE/Contents"
+cat > "$APP_BUNDLE/Contents/Info.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -38,13 +61,13 @@ cat > "$PLIST_PATH" <<EOF
     <key>CFBundleIconFile</key>
     <string>AppIcon</string>
     <key>CFBundleIdentifier</key>
-    <string>com.sehaxe.bulbagpt</string>
+    <string>$IDENTIFIER</string>
     <key>CFBundleName</key>
     <string>BulbaGPT Studio</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>1.0</string>
+    <string>$VERSION</string>
     <key>LSMinimumSystemVersion</key>
     <string>10.13</string>
     <key>NSHighResolutionCapable</key>
@@ -53,11 +76,9 @@ cat > "$PLIST_PATH" <<EOF
 </plist>
 EOF
 
-# ---------------------------------------------------------
-# 5. Копирование start.sh ВНУТРЬ приложения
-# ---------------------------------------------------------
-echo "📜 Копирование start.sh в ресурсы приложения..."
-APP_RESOURCES="$ROOT_DIR$INSTALL_LOCATION/BulbaGPT Studio.app/Contents/Resources"
+# 6. Копирование start.sh
+echo "📜 Копирование start.sh в Resources..."
+APP_RESOURCES="$APP_BUNDLE/Contents/Resources"
 mkdir -p "$APP_RESOURCES"
 
 if [ -f "resources/start.sh" ]; then
@@ -68,7 +89,34 @@ else
     exit 1
 fi
 
-# Если есть иконка .icns, скопируй её тоже:
-# if [ -f "resources/icon.icns" ]; then
-#     cp "resources/icon.icns" "$APP_RESOURCES/AppIcon.icns"
-# fi
+# 7. Сборка пакета (PKG)
+echo "📦 Сборка component.pkg..."
+
+PKG_ARGS=(
+    --root "$ROOT_DIR"
+    --identifier "$IDENTIFIER"
+    --version "$VERSION"
+    --install-location "/"
+    --ownership recommended
+)
+
+if [ -d "scripts" ] && [ "$(ls -A scripts)" ]; then
+    echo "   🔧 Исправление прав скриптов..."
+    chmod -R +x scripts/
+    echo "   ℹ️ Добавляем скрипты установки (postinstall)."
+    PKG_ARGS+=(--scripts scripts)
+fi
+
+pkgbuild "${PKG_ARGS[@]}" component.pkg
+
+# 8. Финальная упаковка
+echo "💿 Создание дистрибутива..."
+productbuild --synthesize --package component.pkg distribution.xml
+productbuild --distribution distribution.xml --package-path . "${APP_NAME}_Installer.pkg"
+
+# 9. Уборка
+rm component.pkg
+rm distribution.xml
+rm -rf "$BUILD_DIR"
+
+echo "✅ ГОТОВО! Установщик создан: ${APP_NAME}_Installer.pkg"
