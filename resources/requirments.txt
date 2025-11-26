@@ -1,0 +1,13 @@
+torch>=2.2.0
+numpy
+pandas
+gradio
+sentencepiece
+transformers
+safetensors
+accelerate
+requests
+datasets
+tqdm
+tensorboard
+bitsandbytes; platform_system == "Linux"

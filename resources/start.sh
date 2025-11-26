@@ -1,123 +1,111 @@
 #!/bin/bash
 
 # --- НАСТРОЙКИ ---
-# Имя окружения conda
 CONDA_ENV_NAME="bulbagpt_env"
 PYTHON_VERSION="3.10"
 
-# Переходим в папку приложения (/Applications/BulbaGPT)
+# Переходим в папку приложения
 cd "$(dirname "$0")/../../../" 
 APP_ROOT=$(pwd)
 
-# Логгирование
+# Лог
 LOG_FILE="$APP_ROOT/debug_log.txt"
 exec > "$LOG_FILE" 2>&1
 
-echo "--- ЗАПУСК (CONDA EDITION): $(date) ---"
+echo "--- ЗАПУСК (MINIFORGE EDITION): $(date) ---"
 echo "Рабочая папка: $APP_ROOT"
 
-# Добавляем пути (на случай если brew уже есть)
+# Пути
 export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
 
-# ==============================================================================
-# 1. АВТОМАТИЧЕСКАЯ УСТАНОВКА HOMEBREW
-# ==============================================================================
+# 1. BREW (Оставляем как было)
 if ! command -v brew &> /dev/null; then
-    echo "⚠️ Homebrew не найден!"
-    echo "📣 Запускаем окно Терминала для установки Brew..."
-    
-    # Мы запускаем установку в отдельном окне Терминала, так как нужен пароль (sudo)
-    # Скрипт ждет, пока появится файл brew
+    echo "⚠️ Homebrew не найден, запускаем установку в терминале..."
     osascript -e 'tell application "Terminal" to do script "/bin/bash -c \"$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\"; exit"'
     
-    echo "⏳ Ждем завершения установки Brew (пока пользователь введет пароль)..."
-    
-    # Цикл ожидания (ждем пока brew появится)
-    MAX_RETRIES=300 # ждать 5 минут макс
+    # Ждем установки
+    MAX_RETRIES=300
     COUNT=0
     while ! command -v brew &> /dev/null; do
         sleep 1
-        # Обновляем PATH для проверки (Brew ставится в разные места на M1 и Intel)
         export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
-        
         COUNT=$((COUNT+1))
-        if [ $COUNT -ge $MAX_RETRIES ]; then
-            echo "❌ Тайм-аут ожидания установки Brew. Пропускаем..."
-            break
-        fi
+        if [ $COUNT -ge $MAX_RETRIES ]; then break; fi
     done
-    echo "✅ Brew обнаружен (или пропущен)!"
-else
-    echo "✅ Homebrew уже установлен."
 fi
 
 # ==============================================================================
-# 2. УСТАНОВКА ЛОКАЛЬНОЙ MINICONDA
+# 2. УСТАНОВКА MINIFORGE (Вместо Miniconda)
 # ==============================================================================
-# Мы ставим Conda ПРЯМО В ПАПКУ ПРИЛОЖЕНИЯ. Это надежно и не ломает систему пользователя.
-MINICONDA_DIR="$APP_ROOT/miniconda"
-CONDA_EXE="$MINICONDA_DIR/bin/conda"
+MINIFORGE_DIR="$APP_ROOT/miniforge3"
+CONDA_EXE="$MINIFORGE_DIR/bin/conda"
 
 if [ ! -f "$CONDA_EXE" ]; then
-    echo "⚠️ Conda не найдена. Начинаем загрузку..."
+    echo "⚠️ Conda не найдена. Скачиваем Miniforge (без ToS блокировок)..."
     
-    # Определяем архитектуру (M1/M2 или Intel)
     ARCH=$(uname -m)
     if [ "$ARCH" == "arm64" ]; then
-        CONDA_URL="https://repo.anaconda.com/miniconda/Miniconda3-latest-MacOSX-arm64.sh"
+        # Ссылка для Apple Silicon (M1/M2/M3)
+        URL="https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-MacOSX-arm64.sh"
     else
-        CONDA_URL="https://repo.anaconda.com/miniconda/Miniconda3-latest-MacOSX-x86_64.sh"
+        # Ссылка для Intel Mac
+        URL="https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-MacOSX-x86_64.sh"
     fi
     
-    echo "📥 Скачивание Miniconda ($ARCH)..."
-    curl -L -o miniconda.sh "$CONDA_URL"
+    echo "📥 Скачивание..."
+    curl -L -o miniforge.sh "$URL"
     
-    echo "📦 Установка Miniconda..."
-    # -b = batch mode (без вопросов), -u = update, -p = путь установки
-    bash miniconda.sh -b -u -p "$MINICONDA_DIR"
-    rm miniconda.sh
+    echo "📦 Установка Miniforge..."
+    # -b = batch mode (тихая установка)
+    bash miniforge.sh -b -u -p "$MINIFORGE_DIR"
+    rm miniforge.sh
     
-    echo "✅ Miniconda установлена в $MINICONDA_DIR"
+    echo "✅ Miniforge установлен."
 else
-    echo "✅ Локальная Miniconda найдена."
+    echo "✅ Miniforge найден."
 fi
 
 # ==============================================================================
-# 3. НАСТРОЙКА ОКРУЖЕНИЯ
+# 3. ОКРУЖЕНИЕ
 # ==============================================================================
-# Активируем conda для текущего скрипта
-source "$MINICONDA_DIR/bin/activate"
+source "$MINIFORGE_DIR/bin/activate"
 
-# Проверяем, создано ли окружение
+# Проверяем окружение
 if ! conda info --envs | grep -q "$CONDA_ENV_NAME"; then
-    echo "🔨 Создаем окружение $CONDA_ENV_NAME (Python $PYTHON_VERSION)..."
+    echo "🔨 Создаем окружение $CONDA_ENV_NAME..."
+    # Используем канал conda-forge по умолчанию
     conda create -y -n "$CONDA_ENV_NAME" python="$PYTHON_VERSION"
-else
-    echo "✅ Окружение $CONDA_ENV_NAME уже существует."
 fi
 
-# Активируем наше окружение
 conda activate "$CONDA_ENV_NAME"
 
 # ==============================================================================
-# 4. УСТАНОВКА ЗАВИСИМОСТЕЙ (pip install)
+# 4. ЗАВИСИМОСТИ (ИСПРАВЛЕНИЕ ОШИБКИ ИЗ ЛОГА)
 # ==============================================================================
-if [ -f "requirements.txt" ]; then
-    echo "📦 Установка библиотек из requirements.txt..."
-    # Используем pip внутри conda
-    pip install -r requirements.txt
+# Мы ищем файл requirements.txt ВНУТРИ Resources, так надежнее
+REQ_FILE="$APP_ROOT/Contents/Resources/requirements.txt"
+
+# Если его нет там, ищем в корне (на всякий случай)
+if [ ! -f "$REQ_FILE" ]; then
+    REQ_FILE="$APP_ROOT/requirements.txt"
+fi
+
+if [ -f "$REQ_FILE" ]; then
+    echo "📦 Установка библиотек из $REQ_FILE..."
+    pip install -r "$REQ_FILE"
 else
-    echo "⚠️ Файл requirements.txt не найден."
+    echo "❌ КРИТИЧЕСКАЯ ОШИБКА: requirements.txt не найден нигде!"
+    echo "Пожалуйста, положи файл requirements.txt в папку resources перед сборкой."
+    ls -R "$APP_ROOT" # Покажет структуру папок в логе, чтобы ты понял, где файлы
 fi
 
 # ==============================================================================
-# 5. ЗАПУСК ПРИЛОЖЕНИЯ
+# 5. ЗАПУСК
 # ==============================================================================
 if [ -f "main.py" ]; then
-    echo "🚀 ЗАПУСК main.py ЧЕРЕЗ CONDA..."
+    echo "🚀 ЗАПУСК..."
     python -u main.py
 else
-    echo "❌ Ошибка: main.py не найден в $APP_ROOT"
-    ls -la
+    echo "❌ Ошибка: main.py не найден."
     exit 1
 fi
