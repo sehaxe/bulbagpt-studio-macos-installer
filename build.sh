@@ -9,9 +9,10 @@ ROOT_DIR="$BUILD_DIR/root"
 MAIN_REPO_URL="https://github.com/sehaxe/bulbagpt-studio.git"
 IDENTIFIER="com.sehaxe.bulbagpt"
 VERSION="1.0"
+
 APP_BUNDLE="$ROOT_DIR$INSTALL_LOCATION/BulbaGPT Studio.app"
 
-echo "🚀 Начинаем сборку $APP_NAME (Design Edition)..."
+echo "🚀 Начинаем сборку $APP_NAME (Icon Edition)..."
 
 # 1. Очистка
 echo "🧹 Очистка..."
@@ -31,17 +32,18 @@ rm -rf "$ROOT_DIR$INSTALL_LOCATION/.github"
 rm -rf "$ROOT_DIR$INSTALL_LOCATION/.gitignore"
 
 # 4. Компиляция Swift-лаунчера
-echo "🐦 Компиляция Swift Launcher..."
+echo "🐦 Компиляция Launcher..."
 APP_EXECUTABLE_DIR="$APP_BUNDLE/Contents/MacOS"
 mkdir -p "$APP_EXECUTABLE_DIR"
+
 if [ -f "resources/launcher.swift" ]; then
     swiftc resources/launcher.swift -o "$APP_EXECUTABLE_DIR/BulbaGPT Studio"
 else
-    echo "❌ Ошибка: resources/launcher.swift не найден"
+    echo "❌ Ошибка: resources/launcher.swift не найден!"
     exit 1
 fi
 
-# 5. Info.plist
+# 5. Создание Info.plist (С ИКОНКОЙ)
 echo "📝 Создание Info.plist..."
 mkdir -p "$APP_BUNDLE/Contents"
 cat > "$APP_BUNDLE/Contents/Info.plist" <<EOF
@@ -51,8 +53,11 @@ cat > "$APP_BUNDLE/Contents/Info.plist" <<EOF
 <dict>
     <key>CFBundleExecutable</key>
     <string>BulbaGPT Studio</string>
+    
+    <!-- ИМЯ ФАЙЛА ИКОНКИ (без расширения) -->
     <key>CFBundleIconFile</key>
     <string>AppIcon</string>
+    
     <key>CFBundleIdentifier</key>
     <string>$IDENTIFIER</string>
     <key>CFBundleName</key>
@@ -65,22 +70,42 @@ cat > "$APP_BUNDLE/Contents/Info.plist" <<EOF
     <string>10.13</string>
     <key>NSHighResolutionCapable</key>
     <true/>
+    
+    <!-- false = ПОКАЗЫВАТЬ В ДОКЕ (Стандартное приложение) -->
+    <key>LSUIElement</key>
+    <false/>
 </dict>
 </plist>
 EOF
 
-# 6. Ресурсы
+# 6. Копирование ресурсов
 echo "📜 Копирование ресурсов..."
 APP_RESOURCES="$APP_BUNDLE/Contents/Resources"
 mkdir -p "$APP_RESOURCES"
-cp resources/start.sh "$APP_RESOURCES/start.sh"
-chmod +x "$APP_RESOURCES/start.sh"
 
+# a) Копируем start.sh
+if [ -f "resources/start.sh" ]; then
+    cp resources/start.sh "$APP_RESOURCES/start.sh"
+    chmod +x "$APP_RESOURCES/start.sh"
+else
+    echo "❌ resources/start.sh не найден!"
+    exit 1
+fi
+
+# b) Копируем requirements.txt
 if [ -f "resources/requirements.txt" ]; then
     cp resources/requirements.txt "$ROOT_DIR$INSTALL_LOCATION/requirements.txt"
 fi
 
-# 7. Сборка компонента
+# c) КОПИРУЕМ ИКОНКУ (НОВОЕ)
+if [ -f "resources/AppIcon.icns" ]; then
+    echo "🎨 Установка иконки..."
+    cp "resources/AppIcon.icns" "$APP_RESOURCES/AppIcon.icns"
+else
+    echo "⚠️ Иконка AppIcon.icns не найдена в папке resources! Будет стандартная иконка."
+fi
+
+# 7. Сборка пакета
 echo "📦 Сборка component.pkg..."
 PKG_ARGS=(
     --root "$ROOT_DIR"
@@ -95,61 +120,62 @@ if [ -d "scripts" ]; then
 fi
 pkgbuild "${PKG_ARGS[@]}" component.pkg
 
-# ------------------------------------------------------------------
-# 8. СОЗДАНИЕ КРАСИВОГО ДИСТРИБУТИВА (ГЛАВНОЕ ИЗМЕНЕНИЕ)
-# ------------------------------------------------------------------
-echo "🎨 Настройка дизайна установщика..."
+# 8. Финальная упаковка (Дизайн установщика)
+echo "💿 Создание дистрибутива..."
 
-# Генерируем базовый XML
+# Создаем XML
 productbuild --synthesize --package component.pkg distribution.xml
 
-# Внедряем настройки дизайна в XML с помощью python (так проще всего вставить текст в XML)
-# Мы добавляем теги <title>, <background>, <welcome>, <license>, <conclusion>
+# Добавляем дизайн (фон, приветствие) в XML
 python3 -c "
 import xml.etree.ElementTree as ET
-
-tree = ET.parse('distribution.xml')
-root = tree.getroot()
-
-# Устанавливаем заголовок окна
-title = ET.Element('title')
-title.text = '$APP_NAME Studio'
-root.insert(0, title)
-
-# Добавляем фон
-bg = ET.Element('background')
-bg.set('file', 'background.jpg')
-bg.set('alignment', 'bottomleft') # или 'topleft', 'center'
-bg.set('scaling', 'proportional')
-root.append(bg)
-
-# Добавляем HTML страницы
-welcome = ET.Element('welcome')
-welcome.set('file', 'welcome.html')
-root.append(welcome)
-
-license = ET.Element('license')
-license.set('file', 'license.html')
-root.append(license)
-
-conclusion = ET.Element('conclusion')
-conclusion.set('file', 'conclusion.html')
-root.append(conclusion)
-
-tree.write('distribution.xml', encoding='utf-8', xml_declaration=True)
+try:
+    tree = ET.parse('distribution.xml')
+    root = tree.getroot()
+    
+    title = ET.Element('title')
+    title.text = '$APP_NAME Studio'
+    root.insert(0, title)
+    
+    # Если есть файлы дизайна, добавляем их
+    import os
+    if os.path.exists('installer_assets/background.png'):
+        bg = ET.Element('background')
+        bg.set('file', 'background.png')
+        bg.set('alignment', 'bottomleft')
+        bg.set('scaling', 'proportional')
+        root.append(bg)
+        
+    if os.path.exists('installer_assets/welcome.html'):
+        wel = ET.Element('welcome')
+        wel.set('file', 'welcome.html')
+        root.append(wel)
+        
+    if os.path.exists('installer_assets/conclusion.html'):
+        conc = ET.Element('conclusion')
+        conc.set('file', 'conclusion.html')
+        root.append(conc)
+        
+    tree.write('distribution.xml', encoding='utf-8', xml_declaration=True)
+except Exception as e:
+    print('Ошибка при настройке XML:', e)
 "
 
-echo "💿 Финальная упаковка с ресурсами..."
-
-# --resources указывает папку, где лежат картинки и html
-productbuild --distribution distribution.xml \
-             --resources installer_assets \
-             --package-path . \
-             "${APP_NAME}_Installer.pkg"
+# Собираем
+if [ -d "installer_assets" ]; then
+    productbuild --distribution distribution.xml \
+                 --resources installer_assets \
+                 --package-path . \
+                 "${APP_NAME}_Installer.pkg"
+else
+    productbuild --distribution distribution.xml \
+                 --package-path . \
+                 "${APP_NAME}_Installer.pkg"
+fi
 
 # 9. Уборка
 rm component.pkg
 rm distribution.xml
 rm -rf "$BUILD_DIR"
 
-echo "✅ ГОТОВО! Красивый установщик: ${APP_NAME}_Installer.pkg"
+echo "✅ ГОТОВО! Установщик: ${APP_NAME}_Installer.pkg"
