@@ -1,20 +1,11 @@
-on run
-    -- Получаем путь к самой программе (.app)
-    set appPath to path to me as string
-    set posixAppPath to POSIX path of appPath
+try
+    -- Получаем путь к файлу start.sh, который лежит внутри .app/Contents/Resources
+    set scriptPath to POSIX path of (path to resource "start.sh")
     
-    -- Программа лежит в /Applications/BulbaGPT/BulbaGPT Studio.app
-    -- Нам нужно подняться на уровень выше, в папку проекта
-    set projectDir to do shell script "dirname " & quoted form of (posixAppPath & "../")
+    -- Запускаем скрипт в терминале (фоном)
+    -- " > /dev/null 2>&1 &" означает, что окно терминала не зависнет
+    do shell script "sh " & quoted form of scriptPath & " > /dev/null 2>&1 &"
     
-    -- Путь к скрипту запуска
-    set startScript to projectDir & "/start.sh"
-    
-    -- Запускаем терминал и выполняем скрипт
-    tell application "Terminal"
-        if not (exists window 1) then reopen
-        activate
-        -- clear screen и запуск
-        do script "clear && sh " & quoted form of startScript
-    end tell
-end run
+on error errMsg
+    display dialog "Critical Error: Could not find start.sh inside the application bundle." & return & return & "Details: " & errMsg with title "Launch Error" buttons {"OK"} default button "OK" with icon stop
+end try
