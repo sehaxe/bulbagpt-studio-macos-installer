@@ -1,13 +1,21 @@
 #!/bin/bash
 
-# Путь установки
+# Путь установки (должен совпадать с тем, что в build скрипте)
 TARGET_APP="/Applications/BulbaGPT"
 
-# Даем права всем пользователям (777 грубо, но надежно для локального ПК) 
-# или меняем владельца на того, кто сейчас залогинен
+# Получаем имя текущего пользователя (того, кто сейчас сидит за маком)
 CURRENT_USER=$(scutil <<< "show State:/Users/ConsoleUser" | awk '/Name :/ { print $3 }')
 
-chown -R $CURRENT_USER:staff "$TARGET_APP"
+# Проверка, что пользователь найден (чтобы не сломать, если ставит админ через удаленку)
+if [ -n "$CURRENT_USER" ] && [ "$CURRENT_USER" != "loginwindow" ]; then
+    # Отдаем папку пользователю
+    chown -R "$CURRENT_USER:staff" "$TARGET_APP"
+    echo "Rights granted to user: $CURRENT_USER"
+else
+    echo "User not found, skipping chown."
+fi
+
+# Устанавливаем права: владелец может всё (7), остальные читать/исполнять (5)
 chmod -R 755 "$TARGET_APP"
 
 exit 0
