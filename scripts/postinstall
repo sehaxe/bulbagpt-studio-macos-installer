@@ -4,7 +4,7 @@
 APP_DIR="/Applications/BulbaGPT"
 MINIFORGE_DIR="$APP_DIR/miniforge3"
 CONDA_ENV_NAME="bulbagpt_env"
-PYTHON_VERSION="3.10"
+PYTHON_VERSION="3.11"
 LOG_FILE="$APP_DIR/install_log.txt"
 
 # Создаем папку (если нет)
