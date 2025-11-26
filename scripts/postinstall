@@ -1,73 +1,62 @@
 #!/bin/bash
 
-# --- НАСТРОЙКИ ---
+# Пути
 APP_DIR="/Applications/BulbaGPT"
 MINIFORGE_DIR="$APP_DIR/miniforge3"
 CONDA_ENV_NAME="bulbagpt_env"
 PYTHON_VERSION="3.10"
 LOG_FILE="$APP_DIR/install_log.txt"
 
-# Начинаем логирование установки
+# Пишем лог установки прямо в папку программы
 exec > "$LOG_FILE" 2>&1
+echo "--- INSTALL START: $(date) ---"
 
-echo "--- НАЧАЛО POSTINSTALL: $(date) ---"
-
-# 1. ОПРЕДЕЛЯЕМ РЕАЛЬНОГО ПОЛЬЗОВАТЕЛЯ
-# Установщик работает как root, но владельцем файлов должен стать пользователь
+# 1. Определяем пользователя (чтобы потом отдать ему права)
 CURRENT_USER=$(scutil <<< "show State:/Users/ConsoleUser" | awk '/Name :/ { print $3 }')
-echo "Пользователь системы: $CURRENT_USER"
+echo "Installing for user: $CURRENT_USER"
 
-# 2. УСТАНОВКА MINIFORGE (Conda)
+# 2. Установка Miniforge (если нет)
 if [ ! -d "$MINIFORGE_DIR" ]; then
-    echo "⬇️ Скачивание Miniforge..."
-    
+    echo "⬇️ Downloading Miniforge..."
     ARCH=$(uname -m)
     if [ "$ARCH" == "arm64" ]; then
         URL="https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-MacOSX-arm64.sh"
     else
         URL="https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-MacOSX-x86_64.sh"
     fi
-    
     curl -L -o /tmp/miniforge.sh "$URL"
-    
-    echo "📦 Установка Miniforge в $MINIFORGE_DIR..."
+    echo "📦 Installing Miniforge..."
     bash /tmp/miniforge.sh -b -u -p "$MINIFORGE_DIR"
     rm /tmp/miniforge.sh
 else
-    echo "✅ Miniforge уже есть."
+    echo "✅ Miniforge exists."
 fi
 
-# 3. СОЗДАНИЕ ОКРУЖЕНИЯ
-# Активируем conda для этого скрипта
+# 3. Создание окружения
 source "$MINIFORGE_DIR/bin/activate"
-
 if ! conda info --envs | grep -q "$CONDA_ENV_NAME"; then
-    echo "🔨 Создание окружения $CONDA_ENV_NAME (Python $PYTHON_VERSION)..."
+    echo "🔨 Creating env $CONDA_ENV_NAME..."
     conda create -y -n "$CONDA_ENV_NAME" python="$PYTHON_VERSION"
 fi
 
-# 4. УСТАНОВКА БИБЛИОТЕК (PIP)
-# Ищем requirements.txt. Он должен быть скопирован в корень приложения скриптом build.sh
+# 4. Установка библиотек (pip install)
 REQ_FILE="$APP_DIR/requirements.txt"
-
 if [ -f "$REQ_FILE" ]; then
-    echo "📦 Установка библиотек через pip в окружение..."
-    # Запускаем pip конкретно из нашего нового окружения
+    echo "📦 Installing requirements..."
     "$MINIFORGE_DIR/envs/$CONDA_ENV_NAME/bin/pip" install -r "$REQ_FILE"
 else
-    echo "⚠️ requirements.txt не найден в $APP_DIR"
+    echo "⚠️ requirements.txt not found in $APP_DIR"
 fi
 
-# 5. ИСПРАВЛЕНИЕ ПРАВ ДОСТУПА (САМОЕ ВАЖНОЕ!)
-# Так как мы ставили всё от имени Root, пользователь не сможет этим пользоваться.
-# Меняем владельца всей папки на пользователя.
+# 5. ИСПРАВЛЕНИЕ ПРАВ (Critical Step)
+# Меняем владельца папки с root на пользователя
 if [ -n "$CURRENT_USER" ] && [ "$CURRENT_USER" != "loginwindow" ]; then
-    echo "👤 Передача прав пользователю $CURRENT_USER..."
+    echo "👤 Fixing permissions for $CURRENT_USER..."
     chown -R "$CURRENT_USER:staff" "$APP_DIR"
 fi
 
-# Даем права на выполнение скриптам
+# Даем права на выполнение
 chmod -R 755 "$APP_DIR"
 
-echo "✅ Установка завершена!"
+echo "✅ Postinstall done."
 exit 0

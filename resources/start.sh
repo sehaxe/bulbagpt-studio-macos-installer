@@ -1,32 +1,32 @@
 #!/bin/bash
 
-# Переходим в папку приложения
+# Переходим в папку приложения (/Applications/BulbaGPT)
 cd "$(dirname "$0")/../../../" 
 APP_ROOT=$(pwd)
 
-# Пути к Conda, которую установил инсталлятор
+# Пути
 MINIFORGE_DIR="$APP_ROOT/miniforge3"
 CONDA_ENV_NAME="bulbagpt_env"
-
-# Лог запуска
 LOG_FILE="$APP_ROOT/runtime_log.txt"
-exec > "$LOG_FILE" 2>&1
 
+# Лог
+exec > "$LOG_FILE" 2>&1
 echo "--- RUNTIME START: $(date) ---"
 
-# Проверяем, установилась ли Conda
+# Проверка установки
 if [ ! -f "$MINIFORGE_DIR/bin/activate" ]; then
-    echo "❌ Ошибка: Miniforge не найден. Похоже, установка прошла с ошибкой."
+    echo "❌ Ошибка: Miniforge не найден. Установка прошла некорректно."
     exit 1
 fi
 
-# Активируем окружение
+# Активация
 source "$MINIFORGE_DIR/bin/activate" "$CONDA_ENV_NAME"
 
-# Запускаем
+# Запуск
 if [ -f "main.py" ]; then
-    echo "🚀 Запуск main.py..."
+    echo "🚀 Launching main.py..."
     python -u main.py
 else
-    echo "❌ main.py не найден."
+    echo "❌ main.py not found!"
+    exit 1
 fi
