@@ -1,125 +1,83 @@
 #!/bin/bash
 
-# --- НАСТРОЙКИ ---
-# Если скрипт лежит в папке с проектом, используем текущую директорию как источник
-SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
-APP_DIR="/Applications/BulbaGPT"
-MINIFORGE_DIR="$APP_DIR/miniforge3"
-CONDA_ENV_NAME="bulbagpt_env"
-PYTHON_VERSION="3.11"
-LOG_FILE="$APP_DIR/install_log.txt"
+APP_NAME="BulbaGPT Studio"
+INSTALL_DIR="/Applications/$APP_NAME.app"
+RES_DIR="$INSTALL_DIR/Contents/Resources"
+SRC_DIR="$RES_DIR/src"
+BIN_DIR="$RES_DIR/bin"
+TOOLS_DIR="$RES_DIR/tools"
+UV_BIN="$TOOLS_DIR/uv"
+LOG_FILE="/tmp/bulbagpt_install.log"
 
-# Создаем папку приложения
-mkdir -p "$APP_DIR"
-
-# Копируем файлы проекта в APP_DIR, если скрипт запущен не оттуда
-if [ "$SCRIPT_DIR" != "$APP_DIR" ]; then
-    echo "📂 Копирование файлов проекта в $APP_DIR..."
-    cp -R "$SCRIPT_DIR/"* "$APP_DIR/" 2>/dev/null || true
-fi
-
-# Включаем запись лога
 exec > >(tee "$LOG_FILE") 2>&1
+echo "--- INSTALL START ---"
 
-echo "--- НАЧАЛО УСТАНОВКИ: $(date) ---"
-echo "Версия установщика: 1.1 (с поддержкой Rust)"
-
+# 1. DETECT REAL USER
 CURRENT_USER=$(scutil <<< "show State:/Users/ConsoleUser" | awk '/Name :/ { print $3 }')
+if [ -z "$CURRENT_USER" ] || [ "$CURRENT_USER" == "loginwindow" ]; then
+    echo "❌ No user logged in."
+    exit 1
+fi
+echo "👤 User: $CURRENT_USER"
 
-# 1. Установка Miniforge
-if [ ! -d "$MINIFORGE_DIR" ]; then
-    echo "⬇️ Скачивание Miniforge..."
-    ARCH=$(uname -m)
-    if [ "$ARCH" == "arm64" ]; then
-        URL="https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-MacOSX-arm64.sh"
+# Function to run as user
+run_as_user() { su - "$CURRENT_USER" -c "$1"; }
+
+# 2. INSTALL HOMEBREW & GTK
+ARCH=$(uname -m)
+if [ "$ARCH" == "arm64" ]; then HOMEBREW_PREFIX="/opt/homebrew"; else HOMEBREW_PREFIX="/usr/local"; fi
+BREW_BIN="$HOMEBREW_PREFIX/bin/brew"
+
+# Allow finding brew in this script
+export PATH="$HOMEBREW_PREFIX/bin:$PATH"
+
+if [ ! -f "$BREW_BIN" ]; then
+    echo "🍺 Installing Homebrew..."
+    # Install non-interactively
+    run_as_user "NONINTERACTIVE=1 /bin/bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\""
+fi
+
+echo "📦 Installing Libraries (GTK4, Adwaita)..."
+run_as_user "$BREW_BIN install gtk4 libadwaita json-glib pkg-config make"
+
+# 3. SETUP UV (PYTHON)
+echo "🕷️ Setup Python..."
+chmod +x "$UV_BIN"
+cd "$SRC_DIR"
+"$UV_BIN" venv "$RES_DIR/venv" --python 3.11
+
+if [ -f "uv.lock" ]; then
+    "$UV_BIN" pip sync uv.lock --python "$RES_DIR/venv"
+elif [ -f "requirements.txt" ]; then
+    "$UV_BIN" pip install -r requirements.txt --python "$RES_DIR/venv"
+else
+    "$UV_BIN" pip install requests --python "$RES_DIR/venv"
+fi
+
+# 4. COMPILE C
+echo "🔨 Compiling..."
+mkdir -p "$BIN_DIR"
+# Ensure pkg-config finds the brew libraries we just installed
+export PKG_CONFIG_PATH="$HOMEBREW_PREFIX/lib/pkgconfig:$HOMEBREW_PREFIX/share/pkgconfig"
+
+if make -C "$SRC_DIR"; then
+    if [ -f "$SRC_DIR/bulba_studio" ]; then
+        mv "$SRC_DIR/bulba_studio" "$BIN_DIR/bulba_studio"
+        chmod +x "$BIN_DIR/bulba_studio"
+        echo "✅ Compiled."
     else
-        URL="https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-MacOSX-x86_64.sh"
-    fi
-    
-    curl -L -o /tmp/miniforge.sh "$URL"
-    echo "📦 Распаковка Miniforge..."
-    bash /tmp/miniforge.sh -b -u -p "$MINIFORGE_DIR"
-    rm /tmp/miniforge.sh
-else
-    echo "✅ Miniforge уже существует."
-fi
-
-# 2. Настройка Conda
-echo "🔨 Настройка Conda окружения..."
-source "$MINIFORGE_DIR/bin/activate"
-
-if ! conda info --envs | grep -q "$CONDA_ENV_NAME"; then
-    echo "   Создаем env $CONDA_ENV_NAME (Python $PYTHON_VERSION)..."
-    conda create -y -n "$CONDA_ENV_NAME" python="$PYTHON_VERSION"
-else
-    echo "   Окружение уже есть."
-fi
-
-# Активируем окружение
-conda activate "$CONDA_ENV_NAME"
-
-# 3. Проверка и установка Rust (КРИТИЧНОЕ ИСПРАВЛЕНИЕ)
-echo "🦀 Проверка Rust Toolchain..."
-
-# Пробуем подтянуть переменные окружения Rust, если они есть
-if [ -f "$HOME/.cargo/env" ]; then
-    source "$HOME/.cargo/env"
-fi
-
-if ! command -v cargo &> /dev/null; then
-    echo "⚠️ Rust не найден. Устанавливаем Rustup..."
-    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-    source "$HOME/.cargo/env"
-else
-    echo "✅ Rust уже установлен: $(cargo --version)"
-fi
-
-# 4. Установка библиотек Python
-REQ_FILE="$APP_DIR/requirements.txt"
-if [ -f "$REQ_FILE" ]; then
-    echo "📦 Установка библиотек (pip install)..."
-    pip install -r "$REQ_FILE"
-    # Принудительно ставим maturin, если его нет в requirements
-    pip install maturin
-else
-    echo "⚠️ requirements.txt не найден!"
-fi
-
-# 5. Компиляция Rust-ядра (ГЛАВНОЕ ИСПРАВЛЕНИЕ)
-RUST_SRC_DIR="$APP_DIR/bulba_rust"
-
-if [ -d "$RUST_SRC_DIR" ]; then
-    echo "⚙️ Компиляция ядра Bulba Rust (может занять время)..."
-    cd "$RUST_SRC_DIR"
-    
-    # Очистка старых билдов для надежности
-    rm -rf target 2>/dev/null
-    
-    # Компиляция и установка в текущее Python окружение
-    maturin develop --release
-    
-    if [ $? -eq 0 ]; then
-        echo "✅ ЯДРО RUST УСПЕШНО СКОМПИЛИРОВАНО!"
-    else
-        echo "❌ ОШИБКА КОМПИЛЯЦИИ RUST! Проверьте лог."
+        echo "❌ Binary missing."
         exit 1
     fi
-    cd "$APP_DIR"
 else
-    echo "❌ Ошибка: Папка bulba_rust не найдена в $APP_DIR"
-    echo "   Убедитесь, что папка 'bulba_rust' находится рядом с этим скриптом."
+    echo "❌ Make failed."
     exit 1
 fi
 
-# 6. Исправление прав
-echo "👤 Исправление прав доступа..."
-if [ -n "$CURRENT_USER" ] && [ "$CURRENT_USER" != "loginwindow" ]; then
-    chown -R "$CURRENT_USER:staff" "$APP_DIR"
-fi
+# 5. PERMISSIONS
+chown -R root:wheel "$INSTALL_DIR"
+chmod -R 755 "$INSTALL_DIR"
+chmod -R 777 "$BIN_DIR" # Ensure user can execute
+xattr -cr "$INSTALL_DIR" || true
 
-chmod -R 755 "$APP_DIR"
-chmod 666 "$LOG_FILE"
-
-echo "🎉 УСТАНОВКА ПОЛНОСТЬЮ ЗАВЕРШЕНА!"
-echo "➡️  Для запуска: cd $APP_DIR && $MINIFORGE_DIR/envs/$CONDA_ENV_NAME/bin/python main.py"
 exit 0

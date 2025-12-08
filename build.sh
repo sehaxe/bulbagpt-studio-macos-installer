@@ -1,181 +1,128 @@
 #!/bin/bash
 set -e
 
-# --- НАСТРОЙКИ ---
-APP_NAME="BulbaGPT"
-INSTALL_LOCATION="/Applications/$APP_NAME"
-BUILD_DIR="build_temp"
-ROOT_DIR="$BUILD_DIR/root"
-MAIN_REPO_URL="https://github.com/sehaxe/bulbagpt-studio.git"
+# --- CONFIGURATION ---
+APP_NAME="BulbaGPT Studio"
+REPO_URL="https://github.com/sehaxe/bulbagpt-studio.git"
 IDENTIFIER="com.sehaxe.bulbagpt"
 VERSION="1.0"
 
-APP_BUNDLE="$ROOT_DIR$INSTALL_LOCATION/BulbaGPT Studio.app"
+# --- PATHS ---
+BUILD_DIR="build_temp"
+SOURCE_DIR="$BUILD_DIR/source"
+APP_BUNDLE="$BUILD_DIR/$APP_NAME.app"
+CONTENTS_DIR="$APP_BUNDLE/Contents"
+MACOS_DIR="$CONTENTS_DIR/MacOS"
+RES_DIR="$CONTENTS_DIR/Resources"
 
-echo "🚀 Начинаем сборку $APP_NAME (Icon Edition)..."
+echo "🚀 Starting build for $APP_NAME..."
 
-# 1. Очистка
-echo "🧹 Очистка..."
+# 1. CLEANUP
 rm -rf "$BUILD_DIR"
 rm -f "${APP_NAME}_Installer.pkg"
 rm -f component.pkg
 rm -f distribution.xml
 
-# 2. Подготовка
-mkdir -p "$ROOT_DIR/Applications"
+# 2. CLONE REPOSITORY
+echo "📥 Cloning source code..."
+mkdir -p "$BUILD_DIR"
+git clone "$REPO_URL" "$SOURCE_DIR"
 
-# 3. Клонирование
-echo "📥 Клонирование..."
-git clone "$MAIN_REPO_URL" "$ROOT_DIR$INSTALL_LOCATION"
-rm -rf "$ROOT_DIR$INSTALL_LOCATION/.git"
-rm -rf "$ROOT_DIR$INSTALL_LOCATION/.github"
-rm -rf "$ROOT_DIR$INSTALL_LOCATION/.gitignore"
+# 3. PREPARE APP BUNDLE
+mkdir -p "$MACOS_DIR"
+mkdir -p "$RES_DIR"
 
-# 4. Компиляция Swift-лаунчера
-echo "🐦 Компиляция Launcher..."
-APP_EXECUTABLE_DIR="$APP_BUNDLE/Contents/MacOS"
-mkdir -p "$APP_EXECUTABLE_DIR"
-
-if [ -f "resources/launcher.swift" ]; then
-    swiftc resources/launcher.swift -o "$APP_EXECUTABLE_DIR/BulbaGPT Studio"
+# 4. COPY SOURCE CODE
+echo "📂 Copying C source code..."
+# IMPORTANT: Assumes your C code and Makefile are in 'backend'
+if [ -d "$SOURCE_DIR/backend" ]; then
+    cp -r "$SOURCE_DIR/backend" "$RES_DIR/src"
 else
-    echo "❌ Ошибка: resources/launcher.swift не найден!"
+    echo "❌ Error: 'backend' folder not found in repo."
     exit 1
 fi
 
-# 5. Создание Info.plist (С ИКОНКОЙ)
-echo "📝 Создание Info.plist..."
-mkdir -p "$APP_BUNDLE/Contents"
-cat > "$APP_BUNDLE/Contents/Info.plist" <<EOF
+# Copy Python requirements
+if [ -f "$SOURCE_DIR/uv.lock" ]; then cp "$SOURCE_DIR/uv.lock" "$RES_DIR/src/"; fi
+if [ -f "$SOURCE_DIR/pyproject.toml" ]; then cp "$SOURCE_DIR/pyproject.toml" "$RES_DIR/src/"; fi
+if [ -f "$SOURCE_DIR/requirements.txt" ]; then cp "$SOURCE_DIR/requirements.txt" "$RES_DIR/src/"; fi
+
+# 5. DOWNLOAD STANDALONE UV
+echo "⬇️  Downloading 'uv'..."
+mkdir -p "$RES_DIR/tools"
+# Download x86_64 binary (Mac Rosetta runs it fine, ensures compatibility)
+curl -L -o "$RES_DIR/tools/uv.tar.gz" "https://github.com/astral-sh/uv/releases/latest/download/uv-x86_64-apple-darwin.tar.gz"
+tar -xzf "$RES_DIR/tools/uv.tar.gz" -C "$RES_DIR/tools"
+mv "$RES_DIR/tools/uv-x86_64-apple-darwin/uv" "$RES_DIR/tools/uv"
+rm -rf "$RES_DIR/tools/uv.tar.gz" "$RES_DIR/tools/uv-x86_64-apple-darwin"
+chmod +x "$RES_DIR/tools/uv"
+
+# 6. CREATE SHIM SCRIPT
+# This runs when the user double-clicks the app
+cat > "$MACOS_DIR/$APP_NAME" <<EOF
+#!/bin/bash
+DIR="\$( cd "\$( dirname "\${BASH_SOURCE[0]}" )" && pwd )"
+# Binary is located in Resources/bin/bulba_studio (after postinstall compiles it)
+EXEC_PATH="\$DIR/../Resources/bin/bulba_studio"
+if [ -f "\$EXEC_PATH" ]; then
+    exec "\$EXEC_PATH"
+else
+    osascript -e 'display alert "Build Error" message "The application binary is missing. Please reinstall or check permissions."'
+fi
+EOF
+chmod +x "$MACOS_DIR/$APP_NAME"
+
+# 7. ICON & PLIST
+if [ -f "$SOURCE_DIR/resources/AppIcon.icns" ]; then
+    cp "$SOURCE_DIR/resources/AppIcon.icns" "$RES_DIR/AppIcon.icns"
+fi
+
+cat > "$CONTENTS_DIR/Info.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
     <key>CFBundleExecutable</key>
-    <string>BulbaGPT Studio</string>
-    
-    <!-- ИМЯ ФАЙЛА ИКОНКИ (без расширения) -->
+    <string>$APP_NAME</string>
     <key>CFBundleIconFile</key>
     <string>AppIcon</string>
-    
     <key>CFBundleIdentifier</key>
     <string>$IDENTIFIER</string>
     <key>CFBundleName</key>
-    <string>BulbaGPT Studio</string>
+    <string>$APP_NAME</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
     <string>$VERSION</string>
-    <key>LSMinimumSystemVersion</key>
-    <string>10.13</string>
     <key>NSHighResolutionCapable</key>
     <true/>
-    
-    <!-- false = ПОКАЗЫВАТЬ В ДОКЕ (Стандартное приложение) -->
-    <key>LSUIElement</key>
-    <false/>
 </dict>
 </plist>
 EOF
 
-# 6. Копирование ресурсов
-echo "📜 Копирование ресурсов..."
-APP_RESOURCES="$APP_BUNDLE/Contents/Resources"
-mkdir -p "$APP_RESOURCES"
-
-# a) Копируем start.sh
-if [ -f "resources/start.sh" ]; then
-    cp resources/start.sh "$APP_RESOURCES/start.sh"
-    chmod +x "$APP_RESOURCES/start.sh"
-else
-    echo "❌ resources/start.sh не найден!"
-    exit 1
-fi
-
-# b) Копируем requirements.txt
-if [ -f "resources/requirements.txt" ]; then
-    cp resources/requirements.txt "$ROOT_DIR$INSTALL_LOCATION/requirements.txt"
-fi
-
-# c) КОПИРУЕМ ИКОНКУ (НОВОЕ)
-if [ -f "resources/AppIcon.icns" ]; then
-    echo "🎨 Установка иконки..."
-    cp "resources/AppIcon.icns" "$APP_RESOURCES/AppIcon.icns"
-else
-    echo "⚠️ Иконка AppIcon.icns не найдена в папке resources! Будет стандартная иконка."
-fi
-
-# 7. Сборка пакета
-echo "📦 Сборка component.pkg..."
+# 8. BUILD INSTALLER
+echo "📦 Packaging..."
 PKG_ARGS=(
-    --root "$ROOT_DIR"
+    --root "$APP_BUNDLE"
     --identifier "$IDENTIFIER"
     --version "$VERSION"
-    --install-location "/"
-    --ownership recommended
+    --install-location "/Applications/$APP_NAME.app"
 )
 if [ -d "scripts" ]; then
     chmod -R +x scripts/
     PKG_ARGS+=(--scripts scripts)
+else
+    echo "❌ Error: 'scripts/postinstall' missing."
+    exit 1
 fi
+
 pkgbuild "${PKG_ARGS[@]}" component.pkg
 
-# 8. Финальная упаковка (Дизайн установщика)
-echo "💿 Создание дистрибутива..."
-
-# Создаем XML
+# 9. FINALIZE
 productbuild --synthesize --package component.pkg distribution.xml
+# (Optional: Inject XML UI here if you have assets)
+productbuild --distribution distribution.xml --package-path . "${APP_NAME}_Installer.pkg"
 
-# Добавляем дизайн (фон, приветствие) в XML
-python3 -c "
-import xml.etree.ElementTree as ET
-try:
-    tree = ET.parse('distribution.xml')
-    root = tree.getroot()
-    
-    title = ET.Element('title')
-    title.text = '$APP_NAME Studio'
-    root.insert(0, title)
-    
-    # Если есть файлы дизайна, добавляем их
-    import os
-    if os.path.exists('installer_assets/background.png'):
-        bg = ET.Element('background')
-        bg.set('file', 'background.png')
-        bg.set('alignment', 'bottomleft')
-        bg.set('scaling', 'proportional')
-        root.append(bg)
-        
-    if os.path.exists('installer_assets/welcome.html'):
-        wel = ET.Element('welcome')
-        wel.set('file', 'welcome.html')
-        root.append(wel)
-        
-    if os.path.exists('installer_assets/conclusion.html'):
-        conc = ET.Element('conclusion')
-        conc.set('file', 'conclusion.html')
-        root.append(conc)
-        
-    tree.write('distribution.xml', encoding='utf-8', xml_declaration=True)
-except Exception as e:
-    print('Ошибка при настройке XML:', e)
-"
-
-# Собираем
-if [ -d "installer_assets" ]; then
-    productbuild --distribution distribution.xml \
-                 --resources installer_assets \
-                 --package-path . \
-                 "${APP_NAME}_Installer.pkg"
-else
-    productbuild --distribution distribution.xml \
-                 --package-path . \
-                 "${APP_NAME}_Installer.pkg"
-fi
-
-# 9. Уборка
-rm component.pkg
-rm distribution.xml
+rm component.pkg distribution.xml
 rm -rf "$BUILD_DIR"
-
-echo "✅ ГОТОВО! Установщик: ${APP_NAME}_Installer.pkg"
+echo "✅ DONE! Installer: ${APP_NAME}_Installer.pkg"
